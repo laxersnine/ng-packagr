@@ -34,6 +34,7 @@ export type StylesheetProcessor = (sourceFile: string, styleUrl: string, styleFi
 
 export type TemplateProcessor = (sourceFile: string, templateUrl: string, templateFilePath: string) => string | undefined | void;
 
+// TODO: change signature to `(templateUrlVisitor, styleUrlsVisitor)`
 export type ComponentTransformer =
   ({}: {
     templateProcessor: TemplateProcessor,
@@ -52,6 +53,11 @@ export const componentTransformer: ComponentTransformer =
 
       const visitComponents = (node: ts.Decorator): ts.Node => {
         if (isTemplateUrl(node)) {
+
+          //
+          // TODO: return templateUrlVisitor(node);
+          //
+
           // XX: strip quotes (' or ") from path
           const templatePath = node.initializer.getText().substring(1, node.initializer.getText().length - 1);
           const templateFilePath = path.resolve(path.dirname(sourceFilePath), templatePath);
@@ -74,6 +80,11 @@ export const componentTransformer: ComponentTransformer =
             return node;
           }
         } else if (isStyleUrls(node)) {
+
+          //
+          // TODO: return styleUrlsVisitor(node);
+          //
+
           // handle array arguments for styleUrls
           const styleUrls = node.initializer.getChildren()
             .filter((node) => node.kind === ts.SyntaxKind.SyntaxList)

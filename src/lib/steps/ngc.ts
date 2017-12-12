@@ -49,74 +49,14 @@ export const prepareTsConfig: BuildStep =
     artefacts.tsConfig = tsConfig;
   }
 
-/** Transforms TypeScript AST */
-const transformSources =
-  (tsConfig: TsConfig, transformers: ts.TransformerFactory<ts.SourceFile>[]): ts.TransformationResult<ts.SourceFile> => {
-    const compilerHost: ng.CompilerHost = ng.createCompilerHost({
-      options: tsConfig.options
-    });
-    const program: ng.Program = ng.createProgram({
-      rootNames: [ ...tsConfig.rootNames ],
-      options: tsConfig.options,
-      host: compilerHost
-    });
-    const transformationResult: ts.TransformationResult<ts.SourceFile> = ts.transform(
-      program.getTsProgram().getSourceFiles(),
-      transformers,
-      tsConfig.options
-    );
-
-    return transformationResult;
-  }
-
-const compilerHostFromArtefacts =
-  (artefacts: Artefacts) => {
-    const wrapped = ts.createCompilerHost(artefacts.tsConfig.options);
-
-    return {
-      ...wrapped,
-      getSourceFile: (fileName, version) => {
-        const inTransformation = artefacts.tsSources.transformed
-          .find((file) => file.fileName === fileName);
-
-        if (inTransformation) {
-          // FIX see https://github.com/Microsoft/TypeScript/issues/19950
-          if (!inTransformation['ambientModuleNames']) {
-            inTransformation['ambientModuleNames'] = inTransformation['original']['ambientModuleNames'];
-          }
-
-          // FIX synthesized source files cause ngc/tsc/tsickle to chock
-          if ((inTransformation.flags & 8) !== 0) {
-            const sourceText = artefacts.extras<SynthesizedSourceFile>(`ts:${inTransformation.fileName}`).writeSourceText();
-
-            return ts.createSourceFile(
-              inTransformation.fileName,
-              sourceText,
-              inTransformation.languageVersion,
-              true,
-              ts.ScriptKind.TS
-            );
-          }
-
-          return inTransformation;
-        } else {
-          return wrapped.getSourceFile(fileName, version);
-        }
-      },
-      getSourceFileByPath: (fileName, path, languageVersion) => {
-        console.warn("getSourceFileByPath");
-
-        return wrapped.getSourceFileByPath(fileName, path, languageVersion);
-      }
-    };
-  }
-
-/** Extracts templateUrl and styleUrls from `@Component({..})` decorators. */
-export const collectTemplateAndStylesheetFiles: BuildStep =
+/**
+ * Analyses the TypeScript source set: extracts assets references in `templateUrl` and `stylUrls`,
+ * analyses dependencies.
+ */
+export const analyseSourceFiles: BuildStep =
   ({ artefacts, entryPoint, pkg }) => {
-    const tsConfig = artefacts.tsConfig;
-
-    const collector = componentTransformer({
+    // Extracts templateUrl and styleUrls from `@Component({..})` decorators.
+    const templateAndStylesExtractor = componentTransformer({
       templateProcessor: (a, b, templateFilePath) => {
         artefacts.template(templateFilePath, null);
       },
@@ -125,7 +65,9 @@ export const collectTemplateAndStylesheetFiles: BuildStep =
       }
     });
 
-    const analyzeIntraPackageDependencies: ts.TransformerFactory<ts.SourceFile> =
+    // Analyses compile-time dependencies
+    // TODO: move to ts-transforms ...
+    const dependencyAnalyser: ts.TransformerFactory<ts.SourceFile> =
       (context: ts.TransformationContext) => {
         // list of the module ids in this package
         const allModuleIds = [ pkg.primary, ...pkg.secondaries ]
@@ -170,13 +112,34 @@ export const collectTemplateAndStylesheetFiles: BuildStep =
           return ts.visitEachChild(sourceFile, visitImports, context);
         };
       }
+    // TODO: ...end
 
-    artefacts.tsSources = transformSources(
-      tsConfig,
+
+    // Prepare ts stuff
+    const tsConfig = artefacts.tsConfig;
+    const compilerHost: ng.CompilerHost = ng.createCompilerHost({
+      options: tsConfig.options
+    });
+    const program = ng.createProgram({
+      rootNames: [ ...tsConfig.rootNames ],
+      options: tsConfig.options,
+      host: compilerHost
+    });
+
+    // Apply ts transformations
+    artefacts.tsSources = ts.transform(
+      program.getTsProgram().getSourceFiles(),
       [
-        collector,
-        analyzeIntraPackageDependencies
-      ]
+        (context) => {
+          log.info(`Extracting templateUrl and styleUrls`);
+          return templateAndStylesExtractor(context);
+        },
+        (context) => {
+          log.info(`Analysing dependencies`);
+          return dependencyAnalyser(context);
+        }
+      ],
+      tsConfig.options
     );
   }
 
@@ -208,6 +171,48 @@ class SynthesizedSourceFile {
   }
 
 }
+
+const compilerHostFromArtefacts =
+  (artefacts: Artefacts): ts.CompilerHost => {
+    const wrapped = ts.createCompilerHost(artefacts.tsConfig.options);
+
+    return {
+      ...wrapped,
+      getSourceFile: (fileName, version) => {
+        const inTransformation = artefacts.tsSources.transformed
+          .find((file) => file.fileName === fileName);
+
+        if (inTransformation) {
+          // FIX see https://github.com/Microsoft/TypeScript/issues/19950
+          if (!inTransformation['ambientModuleNames']) {
+            inTransformation['ambientModuleNames'] = inTransformation['original']['ambientModuleNames'];
+          }
+
+          // FIX synthesized source files cause ngc/tsc/tsickle to chock
+          if ((inTransformation.flags & 8) !== 0) {
+            const sourceText = artefacts.extras<SynthesizedSourceFile>(`ts:${inTransformation.fileName}`).writeSourceText();
+
+            return ts.createSourceFile(
+              inTransformation.fileName,
+              sourceText,
+              inTransformation.languageVersion,
+              true,
+              ts.ScriptKind.TS
+            );
+          }
+
+          return inTransformation;
+        } else {
+          return wrapped.getSourceFile(fileName, version);
+        }
+      },
+      getSourceFileByPath: (fileName, path, languageVersion) => {
+        console.warn("getSourceFileByPath");
+
+        return wrapped.getSourceFileByPath(fileName, path, languageVersion);
+      }
+    };
+  }
 
 /** Transforms templateUrl and styleUrls in `@Component({..})` decorators. */
 export const inlineTemplatesAndStyles: BuildStep =

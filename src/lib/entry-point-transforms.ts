@@ -10,7 +10,7 @@ import { NgEntryPoint, NgPackage } from './domain/ng-package-format';
 // Build steps
 import { writePackage } from './steps/package';
 import { processAssets } from './steps/assets';
-import { ngc, prepareTsConfig, collectTemplateAndStylesheetFiles, inlineTemplatesAndStyles } from './steps/ngc';
+import { ngc, prepareTsConfig, analyseSourceFiles, inlineTemplatesAndStyles } from './steps/ngc';
 import { minifyJsFile } from './steps/uglify';
 import { remapSourceMap, relocateSourceMapSources } from './steps/sorcery';
 import { rollup } from './steps/rollup';
@@ -36,9 +36,8 @@ export const transformSources: BuildStep =
     // 1. TWO-PASS TSC TRANSFORMATION
     prepareTsConfig(args);
 
-    // First pass: collect templateUrl and styleUrls referencing source files.
-    log.info('Extracting templateUrl and styleUrls');
-    collectTemplateAndStylesheetFiles(args);
+    // First pass: extract templateUrl and styleUrls, analyse dependencies
+    analyseSourceFiles(args);
 
     // Then, process assets keeping transformed contents in memory.
     log.info('Processing assets');
