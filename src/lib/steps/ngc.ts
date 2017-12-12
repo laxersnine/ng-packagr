@@ -69,9 +69,6 @@ const transformSources =
     return transformationResult;
   }
 
-//const compilerHostFromTransformation =
-//  ({transformation, options}: {transformation: ts.TransformationResult<ts.SourceFile>, options: ts.CompilerOptions}): ts.CompilerHost => {
-
 const compilerHostFromArtefacts =
   (artefacts: Artefacts) => {
     const wrapped = ts.createCompilerHost(artefacts.tsConfig.options);
@@ -128,9 +125,58 @@ export const collectTemplateAndStylesheetFiles: BuildStep =
       }
     });
 
+    const analyzeIntraPackageDependencies: ts.TransformerFactory<ts.SourceFile> =
+      (context: ts.TransformationContext) => {
+        // list of the module ids in this package
+        const allModuleIds = [ pkg.primary, ...pkg.secondaries ]
+          .map((entryPoint) => entryPoint.moduleId);
+
+        return (sourceFile: ts.SourceFile): ts.SourceFile => {
+          // skip source files from 'node_modules' directory (third-party source)
+          if (sourceFile.fileName.includes('node_modules')) {
+            return sourceFile;
+          }
+
+          const findModuleIdFromImport = (node: ts.ImportDeclaration) => {
+            const text = node.moduleSpecifier.getText();
+
+            return text.substring(1, text.length - 1);
+          };
+
+          const visitImports: ts.Visitor = (node) => {
+            if (ts.isImportDeclaration(node)) {
+              // Found an 'import ...' declaration
+              const moduleIdInImport: string = findModuleIdFromImport(node);
+
+              console.log('Found secondary entry point import? ', moduleIdInImport);
+
+              const dependency = allModuleIds.find((moduleId) => moduleId === moduleIdInImport);
+              if (dependency) {
+                // XX: here starts the real work :-)
+                // ... was the secondary entry point already built?
+                // ... Yes: then adjust `compilerOptions.paths`
+                // ... No:  skip this entry point, build the dependee entry point first
+                // ... .... resume or restart the build of this entry point
+                console.log('Found a dependency! ', dependency);
+              }
+
+            } else {
+              return ts.visitEachChild(node, visitImports, context);
+            }
+
+            return node;
+          }
+
+          return ts.visitEachChild(sourceFile, visitImports, context);
+        };
+      }
+
     artefacts.tsSources = transformSources(
       tsConfig,
-      [ collector ]
+      [
+        collector,
+        analyzeIntraPackageDependencies
+      ]
     );
   }
 
